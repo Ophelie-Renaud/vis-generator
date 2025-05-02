@@ -254,6 +254,82 @@ double rayleigh(double sigma) {
 	double u = (double) rand() / RAND_MAX;
 	return sigma * sqrt(-2.0 * log(1.0 - u));
 }
+// Fonction de fenêtre : approximation d'une spheroidal prolate
+float pswf(float x) {
+	if (fabs(x) > 1.0) return 0.0;
+	return powf(cosf(PI * x / 2.0f), 4); // simple approximation
+}
+// Fonction de Bessel modifiée d'ordre 0 (I0)
+float I0(float x) {
+	float sum = 1.0f;
+	float term = 1.0f;
+	for (int n = 1; n < 20; ++n) {
+		term *= (x / (2.0f * n));
+		sum += term * term;
+	}
+	return sum;
+}
+
+// Fonction de fenêtre : Kaiser-Bessel
+float kaiser_bessel(float x, float beta) {
+	if (fabs(x) > 1.0f) return 0.0f;
+	float t = sqrtf(1.0f - x * x);
+	return powf(I0(beta * t) / I0(beta), 2.0f); // carré pour lisser davantage
+}
+void generate_kernel(int NUM_KERNELS, int OVERSAMPLING_FACTOR, int KERNEL_SUPPORT,
+	PRECISION2* kernels, int2* kernel_supports) {
+	bool bessel_boolean = false;
+	int kernel_half = KERNEL_SUPPORT/2;
+	int kernel_size = 2 * kernel_half;
+
+	int kernel_1d_len = (kernel_half + 1) * OVERSAMPLING_FACTOR;
+	int kernel_2d_len = kernel_1d_len * kernel_1d_len;
+
+	int kernel_offset = 0;
+
+	for (int w = 0; w < NUM_KERNELS; ++w)
+	{
+		// Stocke le support et le décalage
+		kernel_supports[w].x = kernel_half;
+		kernel_supports[w].y = kernel_offset;
+
+		// Génère le noyau 1D
+		float* kernel_1d = malloc(sizeof(float) * kernel_1d_len);
+		for (int i = 0; i < kernel_1d_len; ++i) {
+			float x = (float)i / (float)OVERSAMPLING_FACTOR;
+			float norm_x = x / (float)(kernel_half + 1);
+			if (bessel_boolean) {
+				float beta  =3.0f; // bessel parameter to control lobe shape: large β -> thinner lobe (better concentration but increase secondary lobes), tradeoff resolution and noise
+				kernel_1d[i] = kaiser_bessel(norm_x, beta);
+			}else {
+				kernel_1d[i] = pswf(norm_x);
+			}
+
+
+		}
+
+		// Normalise le noyau 1D
+		float sum = 0.f;
+		for (int i = 0; i < kernel_1d_len; ++i) sum += kernel_1d[i];
+		for (int i = 0; i < kernel_1d_len; ++i) kernel_1d[i] /= sum;
+
+		// Produit tensoriel pour obtenir le noyau 2D
+		for (int y = 0; y < kernel_1d_len; ++y) {
+			for (int x = 0; x < kernel_1d_len; ++x) {
+				int idx = kernel_offset + y * kernel_1d_len + x;
+				float val = kernel_1d[x] * kernel_1d[y];
+				kernels[idx].x = val;
+				kernels[idx].y = 0.0f;
+			}
+		}
+
+		kernel_offset += kernel_2d_len;
+		free(kernel_1d);
+	}
+	printf("kernel_offset %d\n",kernel_offset);
+
+	printf("UPDATE >>> Image degridded successfully\n");
+}
 
 void std_degridding(int GRID_SIZE, int NUM_VISIBILITIES, int NUM_KERNELS, int TOTAL_KERNEL_SAMPLES, int OVERSAMPLING_FACTOR, PRECISION2* kernels,
 		int2* kernel_supports, PRECISION2* input_grid, PRECISION3* vis_uvw_coords, int* num_corrected_visibilities, Config* config,
@@ -295,6 +371,8 @@ void std_degridding(int GRID_SIZE, int NUM_VISIBILITIES, int NUM_KERNELS, int TO
 			else if(v >= grid_center){
 				corrected_v = (grid_center - v) + grid_center;
 			}
+        	// Clamp final pour éviter tout débordement
+        	corrected_v = MAX(-grid_center, MIN(grid_center - 1, corrected_v));
 
         	// Détermination de l'indice du noyau sur l'axe y
 			int2 kernel_idx;
@@ -311,6 +389,9 @@ void std_degridding(int GRID_SIZE, int NUM_VISIBILITIES, int NUM_KERNELS, int TO
 				else if(u >= grid_center){
 					corrected_u = (grid_center - u) + grid_center;
 				}
+
+				// Clamp final pour éviter tout débordement
+				corrected_u = MAX(-grid_center, MIN(grid_center - 1, corrected_u));
 
 				// Détermination de l'indice du noyau sur l'axe x
 				kernel_idx.x = abs((int)ROUND((corrected_u - grid_pos.x) * OVERSAMPLING_FACTOR));
@@ -344,7 +425,7 @@ void std_degridding(int GRID_SIZE, int NUM_VISIBILITIES, int NUM_KERNELS, int TO
 
 		// Normalisation des visibilités pour éviter les valeurs trop petites
 		output_visibilities[i].x = comm_norm < 1e-5f ? output_visibilities[i].x / 1e-5f : output_visibilities[i].x / comm_norm;
-		output_visibilities[i].y = comm_norm < 1e-5f ? output_visibilities[i].x / 1e-5f : output_visibilities[i].y / comm_norm;
+		output_visibilities[i].y = comm_norm < 1e-5f ? output_visibilities[i].y / 1e-5f : output_visibilities[i].y / comm_norm;
 
 	}
 	printf("UPDATE >>> Image degridded successfully\n");
@@ -538,13 +619,14 @@ int main(void) {
 
 	int NUM_RECEIVERS = 5;//nombre d'antennes
 	int NUM_BASELINE = NUM_RECEIVERS*(NUM_RECEIVERS-1)/2; // nombre de paire d'antennes
-	int OVERSAMPLING_FACTOR = 16; // nombre de fois que les données sont surechantillonée
+	int OVERSAMPLING_FACTOR = 32; // nombre de fois que les données sont surechantillonée
 	int GRID_SIZE = 64; // taille de l'image fits "true sky"
 	int NUM_VISIBILITIES = NUM_BASELINE*TIMING_SAMPLE*NUM_CHANNEL*NUM_POL; // greater than (GRID_SIZE/cell_size)²
-	int NUM_KERNEL = 17;//nombre de noyaux de convolution
-	int k = 10;//GRID_SIZE doit etr au moins 2 fois superieur à la taille du noyau kernel_size = 2*half+1
-	int half_support =(int)( (GRID_SIZE/2 -1)/k);
-	int TOTAL_KERNEL_SAMPLES = (int)(pow(2*half_support*OVERSAMPLING_FACTOR,2)*NUM_KERNEL); //c'est recalculé dans le processus mais faut mettre une taille suffisante
+	int NUM_KERNEL = OVERSAMPLING_FACTOR-1;//nombre de noyaux de convolution
+	int KERNEL_SUPPORT = 2;
+	int k = 2;//GRID_SIZE doit etr au moins 2 fois superieur à la taille du noyau kernel_size = 2*half+1
+	int half_support =KERNEL_SUPPORT/2;//(int)( (GRID_SIZE/2 -1)/k);
+	int TOTAL_KERNEL_SAMPLES = NUM_KERNEL * pow((half_support + 1) * OVERSAMPLING_FACTOR,2);//(int)(pow(2*half_support*OVERSAMPLING_FACTOR,2)*NUM_KERNEL); //c'est recalculé dans le processus mais faut mettre une taille suffisante
 
 
 
@@ -603,9 +685,13 @@ int main(void) {
 	config.visibility_source_file = "vis.csv";
 	config.output_path = "";
 	config.final_image_output = "image.csv";
+	config.degridding_kernel_support_file = "config/kernel_support.csv";
+	config.degridding_kernel_imag_file = "config/kernel_imag.csv";
+	config.degridding_kernel_real_file= "config/kernel_real.csv";
 	config.degridding_kernel_support_file = "config/w-proj_supports_x16_2458_image.csv";
 	config.degridding_kernel_imag_file = "config/w-proj_kernels_imag_x16_2458_image.csv";
 	config.degridding_kernel_real_file= "config/w-proj_kernels_real_x16_2458_image.csv";
+
 	config.oversampling = OVERSAMPLING_FACTOR;
 
 	// Lecture d'une image de référence (ciel réel ou simulé) au format CSV.
@@ -619,7 +705,8 @@ int main(void) {
 
 	// Calcul des facteurs d'échelle et préparation des noyaux utilisés pour
 	// projeter/interpoler les visibilités sur la grille UV.
-	degridding_kernel_host_set_up( NUM_KERNEL, TOTAL_KERNEL_SAMPLES, &config, kernel_supports,  kernels);
+	//degridding_kernel_host_set_up( NUM_KERNEL, TOTAL_KERNEL_SAMPLES, &config, kernel_supports,  kernels);
+	generate_kernel(NUM_KERNEL,OVERSAMPLING_FACTOR,KERNEL_SUPPORT,kernels,kernel_supports);
 
 	//option: genere png de l'image d'entrée
 	save_heatmap_png(input_grid, GRID_SIZE, "input_heatmap.png");

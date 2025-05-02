@@ -1,4 +1,18 @@
-/snap/clion/332/bin/cmake/linux/x64/bin/cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_MAKE_PROGRAM=/snap/clion/332/bin/ninja/linux/x64/ninja -DCMAKE_C_COMPILER=/usr/bin/gcc-12 -DCMAKE_CXX_COMPILER=/usr/bin/g++-12 -G Ninja -S /home/orenaud/Documents/GITHUB/VIS/vis-generator/dataflow_simulator/code -B /home/orenaud/Documents/GITHUB/VIS/vis-generator/dataflow_simulator/code/cmake-build-debug
--- Configuring done (0.0s)
+/snap/clion/338/bin/cmake/linux/x64/bin/cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_MAKE_PROGRAM=/snap/clion/338/bin/ninja/linux/x64/ninja -DCMAKE_C_COMPILER=/usr/bin/gcc-12 -DCMAKE_CXX_COMPILER=/usr/bin/g++-12 -G Ninja -S /home/orenaud/Documents/GITHUB/VIS/vis-generator/dataflow_simulator/code -B /home/orenaud/Documents/GITHUB/VIS/vis-generator/dataflow_simulator/code/cmake-build-debug
+-- The C compiler identification is GNU 12.3.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/gcc-12 - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Found PkgConfig: /usr/bin/pkg-config (found version "1.8.1")
+-- Found FFTW: /usr/include
+-- Configuring done (0.5s)
 -- Generating done (0.0s)
+CMake Warning:
+  Manually-specified variables were not used by the project:
+
+    CMAKE_CXX_COMPILER
+
+
 -- Build files have been written to: /home/orenaud/Documents/GITHUB/VIS/vis-generator/dataflow_simulator/code/cmake-build-debug
